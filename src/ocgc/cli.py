@@ -21,7 +21,9 @@ def status() -> None:
 
 
 @cli.command()
-@click.option("--sort", "sort_by", type=click.Choice(["size", "age", "name"]), default="size", help="Sort sessions by")
+@click.option(
+    "-s", "--sort", "sort_by", type=click.Choice(["size", "age", "name"]), default="size", help="Sort sessions by"
+)
 @click.option("--limit", "-l", type=int, default=None, help="Limit number of sessions shown")
 def sessions(sort_by: str, limit: int | None) -> None:
     """List sessions with sizes, ages, and types."""
@@ -39,17 +41,32 @@ def analyze() -> None:
 
 
 @cli.command()
-@click.option("--older-than", default=None, help="Delete sessions older than duration (e.g., 15m, 1h, 7d, 2w, 3mo)")
-@click.option("--subagents", is_flag=True, default=False, help="Delete subagent sessions (parent_id IS NOT NULL)")
-@click.option("--larger-than", default=None, help="Delete sessions larger than size (e.g., 50M, 1G)")
-@click.option("--strip-reasoning", is_flag=True, default=False, help="Remove reasoning parts only (keeps sessions)")
-@click.option("--session", "session_ids", multiple=True, help="Delete specific session by ID (repeatable)")
-@click.option("--keep-latest", type=int, default=None, help="Keep N most recent sessions, delete the rest")
-@click.option("--clean-snapshots", is_flag=True, default=False, help="Delete all snapshot directories")
 @click.option(
-    "--clean-orphans", is_flag=True, default=False,
+    "-o", "--older-than", default=None, help="Delete sessions older than duration (e.g., 15m, 1h, 7d, 2w, 3mo)"
+)
+@click.option("-s", "--subagents", is_flag=True, default=False, help="Delete subagent sessions (parent_id IS NOT NULL)")
+@click.option("-b", "--larger-than", default=None, help="Delete sessions larger than size (e.g., 50M, 1G)")
+@click.option(
+    "-r", "--strip-reasoning", is_flag=True, default=False, help="Remove reasoning parts only (keeps sessions)"
+)
+@click.option("-S", "--session", "session_ids", multiple=True, help="Delete specific session by ID (repeatable)")
+@click.option("-k", "--keep-latest", type=int, default=None, help="Keep N most recent sessions, delete the rest")
+@click.option("-p", "--clean-snapshots", is_flag=True, default=False, help="Delete all snapshot directories")
+@click.option(
+    "-O",
+    "--clean-orphans",
+    is_flag=True,
+    default=False,
     help="Delete orphan session diff files (no matching session)",
 )
+@click.option(
+    "-m",
+    "--clean-migrated",
+    is_flag=True,
+    default=False,
+    help="Delete stale v1 copies of sessions migrated to v2; v1-only messages are lost permanently",
+)
+@click.option("-l", "--clean-logs", is_flag=True, default=False, help="Delete files in the opencode log directory")
 @click.option("--dry-run", "-n", is_flag=True, default=False, help="Show what would be deleted without doing it")
 @click.option("--force", "-f", is_flag=True, default=False, help="Skip confirmation prompt")
 def purge(
@@ -61,33 +78,42 @@ def purge(
     keep_latest: int | None,
     clean_snapshots: bool,
     clean_orphans: bool,
+    clean_migrated: bool,
+    clean_logs: bool,
     dry_run: bool,
     force: bool,
 ) -> None:
     """Delete sessions by age, type, size, or ID."""
     if keep_latest is not None and keep_latest < 0:
         raise click.BadParameter("must be a non-negative integer", param_hint="'--keep-latest'")
-    from ocgc.purger import run_clean_orphans, run_clean_snapshots, run_purge
+    from ocgc.purger import run_clean_logs, run_clean_migrated, run_clean_orphans, run_clean_snapshots, run_purge
+
+    session_flags = (
+        bool(older_than),
+        bool(subagents),
+        bool(larger_than),
+        bool(session_ids),
+        keep_latest is not None,
+        strip_reasoning,
+    )
+    clean_flags = (clean_snapshots, clean_orphans, clean_migrated, clean_logs)
 
     if clean_snapshots:
         run_clean_snapshots(dry_run=dry_run, force=force)
-        has_more = (
-            clean_orphans or older_than or subagents
-            or larger_than or session_ids
-            or keep_latest is not None or strip_reasoning
-        )
-        if not has_more:
-            return
 
     if clean_orphans:
         run_clean_orphans(dry_run=dry_run, force=force)
-        has_more = (
-            older_than or subagents or larger_than
-            or session_ids or keep_latest is not None
-            or strip_reasoning
-        )
-        if not has_more:
-            return
+
+    if clean_migrated:
+        run_clean_migrated(dry_run=dry_run, force=force)
+
+    if clean_logs:
+        run_clean_logs(dry_run=dry_run, force=force)
+
+    # With clean-only flags there is nothing more to do; with no flags at all
+    # run_purge still reports the missing-flag error.
+    if any(clean_flags) and not any(session_flags):
+        return
 
     run_purge(
         older_than=older_than,

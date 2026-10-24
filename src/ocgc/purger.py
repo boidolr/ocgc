@@ -44,6 +44,9 @@ def parse_size(s: str) -> int:
     return int(value * multipliers[unit])
 
 
+_STRIP_WAL_NOTE = "[dim]Note: the write-ahead log may grow by roughly the stripped size; 'ocgc vacuum' reclaims it.[/]"
+
+
 def run_purge(
     older_than: str | None,
     subagents: bool,
@@ -97,6 +100,7 @@ def run_purge(
         try:
             count = db.strip_reasoning(conn, session_ids=None)
             console.print(f"[green]Deleted {count:,} reasoning parts.[/]")
+            console.print(_STRIP_WAL_NOTE)
         finally:
             conn.close()
         return
@@ -161,6 +165,7 @@ def run_purge(
         if strip_reasoning:
             count = db.strip_reasoning(conn, matched_ids)
             console.print(f"[green]Deleted {count:,} reasoning parts from {len(matched_ids)} sessions.[/]")
+            console.print(_STRIP_WAL_NOTE)
         else:
             files_result = db.purge_sessions(conn, matched_ids)
             freed = format_bytes(summary["total_bytes"])
@@ -173,7 +178,8 @@ def run_purge(
     finally:
         conn.close()
 
-    console.print("[dim]Run 'ocgc vacuum' to reclaim disk space.[/]")
+    if not strip_reasoning:
+        console.print("[dim]Run 'ocgc vacuum' to reclaim disk space.[/]")
 
 
 def run_vacuum(force: bool = False) -> None:
@@ -275,3 +281,90 @@ def run_clean_orphans(dry_run: bool, force: bool) -> None:
 
     result = db.purge_orphan_diffs(orphans)
     console.print(f"[green]Deleted {result.files_deleted} orphan file(s), freed {format_bytes(result.bytes_freed)}.[/]")
+
+
+def run_clean_migrated(dry_run: bool, force: bool) -> None:
+    """Reclaim stale v1 copies of sessions that have migrated to the v2 schema."""
+    if db.check_opencode_running():
+        warn_opencode_running()
+        if not dry_run and not force and not click.confirm("opencode is running. Continue anyway?"):
+            return
+
+    try:
+        conn = db.connect(readonly=False)
+    except FileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from None
+    try:
+        if not db.has_table(conn, "session") or not db.has_table(conn, "session_v2"):
+            console.print("[dim]No legacy v1 sessions to clean.[/]")
+            return
+
+        migrated = db.get_migrated_v1_sessions(conn)
+        if not migrated:
+            console.print("[dim]No stale v1 session copies found.[/]")
+            return
+
+        total_bytes = sum(size for _, size in migrated)
+
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column(style=C_DIM, justify="right")
+        grid.add_column(style=C_VALUE)
+        grid.add_row("Stale v1 sessions", str(len(migrated)))
+        grid.add_row("Reclaimable", format_bytes(total_bytes))
+
+        label = "[bold yellow]Dry Run — Stale v1 copies to delete[/]" if dry_run else "[bold red]Clean Migrated[/]"
+        border = "yellow" if dry_run else "red"
+        console.print(Panel(grid, title=label, border_style=border))
+
+        if dry_run:
+            return
+
+        if not force and not click.confirm(f"Delete stale v1 rows for {len(migrated)} session(s)?"):
+            return
+
+        # Same read-write connection as above: re-check eligibility at delete
+        # time (no close/reopen race), then delete the still-eligible ids in a
+        # single transaction.
+        current = db.get_migrated_v1_sessions(conn)
+        if not current:
+            console.print("[dim]No stale v1 session copies found.[/]")
+            return
+        reclaimed = sum(size for _, size in current)
+        db.clean_migrated_v1(conn, [sid for sid, _ in current])
+        count = len(current)
+    finally:
+        conn.close()
+
+    console.print(
+        f"[green]Deleted stale v1 copies for {count} session(s),"
+        f" ~{format_bytes(reclaimed)} reclaimable after vacuum.[/]"
+    )
+
+
+def run_clean_logs(dry_run: bool, force: bool) -> None:
+    log_files = db.get_log_files()
+    if not log_files:
+        console.print("[dim]No log files found.[/]")
+        return
+
+    total_bytes = sum(size for _, size in log_files)
+
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style=C_DIM, justify="right")
+    grid.add_column(style=C_VALUE)
+    grid.add_row("Log files", str(len(log_files)))
+    grid.add_row("Total size", format_bytes(total_bytes))
+
+    label = "[bold yellow]Dry Run — Logs to delete[/]" if dry_run else "[bold red]Clean Logs[/]"
+    border = "yellow" if dry_run else "red"
+    console.print(Panel(grid, title=label, border_style=border))
+
+    if dry_run:
+        return
+
+    if not force and not click.confirm(f"Delete {len(log_files)} log file(s)?"):
+        return
+
+    result = db.purge_logs()
+    console.print(f"[green]Deleted {result.files_deleted} log file(s), freed {format_bytes(result.bytes_freed)}.[/]")

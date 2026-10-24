@@ -101,6 +101,7 @@ def print_status(
     header.add_row("Session diffs", diff_info)
     header.add_row("Snapshots", f"{format_bytes(fs_stats.snapshot_size)}  ({fs_stats.snapshot_count} projects)")
     header.add_row("Tool output", format_bytes(fs_stats.tool_output_size))
+    header.add_row("Logs", format_bytes(fs_stats.log_size))
     grand_total = db_info.total_size + fs_stats.total_size
     header.add_row("Total on disk", f"[bold]{format_bytes(grand_total)}[/]")
     header.add_row("", "")
@@ -265,6 +266,7 @@ def print_analysis(
     summary.add_row("Session diffs", diff_info)
     summary.add_row("Snapshots", f"{format_bytes(fs_stats.snapshot_size)}  ({fs_stats.snapshot_count} projects)")
     summary.add_row("Tool output", format_bytes(fs_stats.tool_output_size))
+    summary.add_row("Logs", format_bytes(fs_stats.log_size))
     if orphan_count > 0:
         summary.add_row("Orphan diffs", f"[{C_WARN}]{orphan_count} files ({format_bytes(orphan_bytes)})[/]")
 
@@ -297,8 +299,10 @@ def print_analysis(
 
 
 def print_purge_summary(
-    summary: dict[str, int], dry_run: bool = False,
-    diff_files: int = 0, diff_bytes: int = 0,
+    summary: dict[str, int],
+    dry_run: bool = False,
+    diff_files: int = 0,
+    diff_bytes: int = 0,
 ) -> None:
     label = "[bold yellow]Dry Run — Nothing will be deleted[/]" if dry_run else "[bold red]Purge Summary[/]"
     border = "yellow" if dry_run else "red"

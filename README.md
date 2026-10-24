@@ -67,6 +67,13 @@ ocgc purge --session ses_abc123
 # Clean up orphan session diff files (no matching session in DB)
 ocgc purge --clean-orphans
 
+# Delete stale v1 rows for sessions that have migrated to the v2 schema
+# (warning: the v1 copy is deleted permanently, including v1-only messages)
+ocgc purge --clean-migrated
+
+# Delete files in the opencode log directory
+ocgc purge --clean-logs
+
 # Delete all snapshot directories
 ocgc purge --clean-snapshots
 
@@ -74,7 +81,11 @@ ocgc purge --clean-snapshots
 ocgc vacuum
 ```
 
-Multiple purge flags combine with AND. `--strip-reasoning` changes the action from deleting sessions to removing reasoning parts (from matching sessions, or all sessions if no other filters are given). `--clean-orphans` and `--clean-snapshots` run independently before any session purge. `--dry-run` previews without touching anything. `--force` skips the confirmation prompt.
+Multiple purge flags combine with AND. `--strip-reasoning` changes the action from deleting sessions to removing reasoning parts (from matching sessions, or all sessions if no other filters are given) — in both schemas, including reasoning embedded in v2 messages. `--clean-orphans`, `--clean-snapshots`, `--clean-migrated`, and `--clean-logs` run independently before any session purge. `--dry-run` previews without touching anything. `--force` skips the confirmation prompt.
+
+Every option has a short alias, e.g. `ocgc purge -o 14d -n` is the same as `ocgc purge --older-than 14d --dry-run`.
+
+`--clean-migrated` deletes the stale v1 copy of migrated sessions permanently — any v1 messages that have no v2 counterpart are lost.
 
 ## Filesystem storage
 
@@ -82,9 +93,10 @@ Beyond the SQLite database, OpenCode stores data on the filesystem:
 
 - Session diffs (`~/.local/share/opencode/storage/session_diff/`): one JSON file per session containing full file contents. Cleaned automatically when sessions are purged.
 - Snapshots (`~/.local/share/opencode/snapshot/`): git object packs for each project. Use `--clean-snapshots` to delete.
+- Logs (`~/.local/share/opencode/log/`): opencode's log files. Use `--clean-logs` to delete.
 - Tool output (`~/.local/share/opencode/tool-output/`): small files from tool invocations. Shown in stats but no cleanup needed.
 
-`ocgc status` and `ocgc analyze` show sizes for all three directories. `analyze` also reports orphan session diff files (files with no matching session in the DB).
+`ocgc status` and `ocgc analyze` show sizes for all four directories. `analyze` also reports orphan session diff files (files with no matching session in either schema).
 
 ## Safety
 
